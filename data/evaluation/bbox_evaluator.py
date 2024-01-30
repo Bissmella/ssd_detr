@@ -107,8 +107,9 @@ class BboxEvaluator(DatasetEvaluator):
         targets = []
 
         for idx, batch_per_image in enumerate(inputs):  
-            
-            combined_targets = torch.cat((batch_per_image['boxes'], batch_per_image['labels'].unsqueeze(1).float()), dim=1)
+            batch_ratios = torch.tensor([batch_per_image['orig_size'][1], batch_per_image['orig_size'][0], batch_per_image['orig_size'][1], batch_per_image['orig_size'][0]]).to(self.device)
+            tar_boxes = box_ops.box_cxcywh_to_xyxy(batch_per_image['boxes']) * batch_ratios
+            combined_targets = torch.cat((tar_boxes, batch_per_image['labels'].unsqueeze(1).float()), dim=1)
             
             targets.append(combined_targets)
         
@@ -191,7 +192,7 @@ class BboxEvaluator(DatasetEvaluator):
                         
                     
                     # just getting the positive predictions
-                    clss_pred = torch.tensor([1]).float
+                    clss_pred = torch.tensor([1]).float()
                     pi = (pred[:, 5] == clss_pred[0] ).nonzero(as_tuple=False).view(-1)   #pred[:, 5] == cls   changed to one
 
                     #pred[pi, 5] = float(classname[si])

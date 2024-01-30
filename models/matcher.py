@@ -131,6 +131,7 @@ class HungarianMatcher(nn.Module):
 
 
             # Compute the giou cost betwen boxes
+            #breakpoint()
             cost_giou = -generalized_box_iou(
                 box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox)
             )

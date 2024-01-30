@@ -6,10 +6,11 @@
 
 import torch
 
-def to_cuda(samples, targets, device):
+def to_cuda(samples, prompts, targets, device):
     samples = samples.to(device, non_blocking=True)
+    prompts = prompts.to(device, non_blocking=True)
     targets = [{k: v.to(device, non_blocking=True) if k != "image_id" else v for k, v in t.items()} for t in targets]
-    return samples, targets
+    return samples, prompts, targets
 
 class data_prefetcher():
     def __init__(self, loader, device, prefetch=True):
@@ -22,9 +23,10 @@ class data_prefetcher():
 
     def preload(self):
         try:
-            self.next_samples, self.next_targets = next(self.loader)
+            self.next_samples, self.next_prompts, self.next_targets = next(self.loader)
         except StopIteration:
             self.next_samples = None
+            self.next_prompts = None
             self.next_targets = None
             return
         # if record_stream() doesn't work, another option is to make sure device inputs are created
@@ -35,7 +37,7 @@ class data_prefetcher():
         # at the time we start copying to next_*:
         # self.stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(self.stream):
-            self.next_samples, self.next_targets = to_cuda(self.next_samples, self.next_targets, self.device)
+            self.next_samples, self.next_targets = to_cuda(self.next_samples, self.next_prompts, self.next_targets, self.device)
             # more code for the alternative if record_stream() doesn't work:
             # copy_ will record the use of the pinned source tensor in this side stream.
             # self.next_input_gpu.copy_(self.next_input, non_blocking=True)
@@ -52,9 +54,12 @@ class data_prefetcher():
         if self.prefetch:
             torch.cuda.current_stream().wait_stream(self.stream)
             samples = self.next_samples
+            prompts = self.next_prompts
             targets = self.next_targets
             if samples is not None:
                 samples.record_stream(torch.cuda.current_stream())
+            if prompts is not None:
+                prompts.record_stream(torch.cuda.current_stream())
             if targets is not None:
                 for t in targets:
                     for k, v in t.items():
@@ -62,9 +67,10 @@ class data_prefetcher():
             self.preload()
         else:
             try:
-                samples, targets = next(self.loader)
-                samples, targets = to_cuda(samples, targets, self.device)
+                samples, prompts, targets = next(self.loader)
+                samples, prompts, targets = to_cuda(samples, prompts, targets, self.device)
             except StopIteration:
                 samples = None
+                prompts = None
                 targets = None
-        return samples, targets
+        return samples, prompts, targets

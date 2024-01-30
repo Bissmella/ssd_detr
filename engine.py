@@ -60,20 +60,20 @@ def train_hybrid(outputs, targets, k_one2many, criterion, lambda_one2many):
 import random
 from PIL import Image
 from util.misc import nested_tensor_from_tensor_list
-from utils.constants import PASCAL_CLASSES
+from util.constants import PASCAL_CLASSES
 from torchvision import transforms
 IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
 PASCAL_CLASSES = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat",
             "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person",
             "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
-def get_prompts(prmpt_df, batch):
+def get_prompts(prmpt_df, batch, device):
     prmpts = []
     #TODO  random_class should be put inside the class_choices
     class_choices = []
     # with torch.profiler.profile(profile_memory=True) as prof:
     for b in batch:
-        classes = list(b['classes_info'].keys())
+        classes = b['classes_info'].tolist()
         #TODO  case where not ground truth class
         if len(classes) == 0 :
             classes = range(20)
@@ -86,7 +86,7 @@ def get_prompts(prmpt_df, batch):
             # Select one row randomly from the filtered DataFrame
             random_row = random.choice(filtered_df.index)
             # Get the selected row as a DataFrame
-            selected_row = prmpt_df.loc[random_row]
+            selected_row = prmpt_df.iloc[0]#loc[random_row]  #iloc[0]##
             prmpt_path = selected_row["Cropped Image Path"]
 
             prmpt = Image.open(prmpt_path)
@@ -98,14 +98,14 @@ def get_prompts(prmpt_df, batch):
 
             # prmpt =np.load(prmpt_path)
             # prmpt = torch.from_numpy(prmpt)
-            prmpts.append(prmpt)
+            prmpts.append(prmpt.to(device))
         
         class_choices.append(random_class)
         condition = b['labels'] == random_class
         b['labels'] = b['labels'][condition]
         b['boxes'] = b['boxes'][condition]
     prmpts = nested_tensor_from_tensor_list(prmpts)
-    return prmpts, class_choices
+    return prmpts, batch
 
 def train_one_epoch(
     model: torch.nn.Module,
@@ -122,6 +122,7 @@ def train_one_epoch(
     use_fp16: bool = False,
     scaler: torch.cuda.amp.GradScaler = None,
     epoch_iter = None,
+    df = None,
 ):
     model.train()
     criterion.train()
@@ -137,14 +138,14 @@ def train_one_epoch(
     print_freq = 10
 
     prefetcher = data_prefetcher(data_loader, device, prefetch=False)
-    samples, targets = prefetcher.next()
-
+    samples, prmpts, targets = prefetcher.next()
+    #prmpts, targets = get_prompts(df, targets, device)
     # for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
     for idx in metric_logger.log_every(range(epoch_iter), print_freq, header):
         optimizer.zero_grad()
 
         with torch.cuda.amp.autocast(enabled=use_fp16):
-            outputs = model(samples)
+            outputs = model(samples, prmpts)
 
             if k_one2many > 0:
                 loss_dict = train_hybrid(
@@ -197,7 +198,7 @@ def train_one_epoch(
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(grad_norm=grad_total_norm)
 
-        samples, targets = prefetcher.next()
+        samples, prmpts, targets = prefetcher.next()
         lr_scheduler.step()
 
         if use_wandb and idx % print_freq == 0 and dist.get_rank() == 0:
@@ -227,6 +228,7 @@ def evaluate(
     step,
     use_wandb=False,
     reparam=False,
+    df = None,
 ):
     # (hack) disable the one-to-many branch queries
     # save them frist
@@ -257,11 +259,12 @@ def evaluate(
             output_dir=os.path.join(output_dir, "panoptic_eval"),
         )
     
-    for samples, targets in metric_logger.log_every(data_loader[0], 10, header):
+    for samples, prmpts, targets in metric_logger.log_every(data_loader[0], 10, header):
         samples = samples.to(device)
-        targets = [{k: v.to(device) if k != "image_id" else v for k, v in t.items()} for t in targets]
 
-        outputs = model(samples)
+        targets = [{k: v.to(device) if k != "image_id" else v for k, v in t.items()} for t in targets]
+        prmpts = prmpts.to(device)# , targets = get_prompts(df, targets, device)
+        outputs = model(samples, prmpts)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
 
@@ -350,4 +353,5 @@ def evaluate(
     # recover the model parameters for next training epoch
     model.module.num_queries = save_num_queries
     model.module.transformer.two_stage_num_proposals = save_two_stage_num_proposals
-    return results##, coco_evaluator
+    test_metrics = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {**results, **test_metrics} ##, coco_evaluator

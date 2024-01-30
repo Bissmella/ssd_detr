@@ -43,6 +43,7 @@ from fvcore.common.config import CfgNode
 
 from .dataset_mappers import *
 from .dataset_mappers.pascalvoc_dataset_mapper_ix import PascalVOCSegDatasetMapperIX
+from .dataset_mappers.pascalvoc_dataset_mapper_up import PascalVOCPretrainDatasetMapperIX
 from .evaluation.instance_evaluation import InstanceSegEvaluator
 import sys
 sys.path.append("/home/bibahaduri/plain_detr/util")
@@ -422,8 +423,11 @@ def build_eval_dataloader(cfg, dataset_names):
             mapper = ScanNetSegDatasetMapper(cfg, False)
         elif dataset_name in ["scannet_21_panoptic_val", 'bdd10k_40_panoptic_val']:
             mapper = ScanNetPanoDatasetMapper(cfg, False)
-        elif "pascalvoc_val" in dataset_name:
-            mapper = PascalVOCSegDatasetMapperIX(is_train=False, dataset_name= dataset_name, min_size_test= 517, max_size_test= 518)
+        elif "pascalvoc_" in dataset_name:
+            if cfg.upretrain == True:
+                mapper = PascalVOCPretrainDatasetMapperIX(is_train=False, dataset_name= dataset_name, min_size_test= 517, max_size_test= 518)
+            else:
+                mapper = PascalVOCSegDatasetMapperIX(is_train=False, dataset_name= dataset_name, min_size_test= 517, max_size_test= 518)
         elif 'sun' in dataset_name:
             mapper = SunRGBDSegDatasetMapper(cfg, False)
         elif 'refcoco' in dataset_name:
@@ -482,7 +486,10 @@ def build_train_dataloader(cfg, dataset_names):
             mapper = COCOPanopticInteractiveDatasetMapper(cfg, True)
             loaders['coco'] = build_detection_train_loader(cfg, dataset_name=dataset_name, mapper=mapper)
         elif mapper_name == "pascalvoc_train":
-            mapper = PascalVOCSegDatasetMapperIX(dataset_name= dataset_name, min_size_test= 517, max_size_test= 518)
+            if cfg.upretrain == True:
+                mapper = PascalVOCPretrainDatasetMapperIX(dataset_name= dataset_name, min_size_test= 517, max_size_test= 518)
+            else:
+                mapper = PascalVOCSegDatasetMapperIX(dataset_name= dataset_name, min_size_test= 517, max_size_test= 518)
             dataset = None
             if dataset is None:
                 dataset = get_detection_dataset_dicts(
@@ -626,17 +633,26 @@ def batch_collator_eval(batch):
     #Instances(num_instances=1, image_height=388, image_width=518, fields=[gt_boxes: tensor([[  0.,  31., 343., 336.]]), gt_classes: tensor([7])])
     samples = []
     targets = []
+    queries = []
     for b in batch:
         samples.append(b['image'])
         tgt_dict ={}
-        tgt_dict['size'] = torch.tensor([b['width'], b['height']])
-        tgt_dict['orig_size'] = torch.tensor([b['width'], b['height']])
+        if 'size' not in b:
+            tgt_dict['size'] = torch.tensor([b['width'], b['height']])
+        else:
+            tgt_dict['size'] = b['size']
+        tgt_dict['orig_size'] = b['orig_size']##torch.tensor([b['height'], b['width']])
         tgt_dict['image_id'] = b['image_id']
         tgt_dict['labels'] = b['instances'].gt_classes
         tgt_dict['boxes'] = b['instances'].gt_boxes
+        tgt_dict['classes_info'] = torch.tensor(list(b['classes_info'].keys()))
         targets.append(tgt_dict)
+        if 'query' in b:
+            queries.append(b['query'])
     samples = nested_tensor_from_tensor_list(samples)
-    
+    if len(queries) > 0:
+        queries = nested_tensor_from_tensor_list(queries)
+        return (samples, queries, targets)
     return (samples, targets)
 
 def batch_collator_train(batch):
@@ -648,17 +664,27 @@ def batch_collator_train(batch):
     #Instances(num_instances=1, image_height=388, image_width=518, fields=[gt_boxes: tensor([[  0.,  31., 343., 336.]]), gt_classes: tensor([7])])
     samples = []
     targets = []
+    queries = []
     for b in batch:
         samples.append(b['image'])
         tgt_dict ={}
-        tgt_dict['size'] = torch.tensor([b['width'], b['height']])
-        ratio = torch.tensor([b['width'], b['height'], b['width'], b['height']])
-        tgt_dict['orig_size'] = torch.tensor([b['width'], b['height']])
+        if 'size' not in b:
+            tgt_dict['size'] = torch.tensor([b['width'], b['height']])
+        else:
+            tgt_dict['size'] = b['size']
+        ##ratio = torch.tensor([b['width'], b['height'], b['width'], b['height']])
+        tgt_dict['orig_size'] = b['orig_size']##torch.tensor([b['height'], b['width']])
         tgt_dict['image_id'] = b['image_id']
         tgt_dict['labels'] = b['instances'].gt_classes
-        tgt_dict['boxes'] = box_ops.box_xyxy_to_cxcywh(b['instances'].gt_boxes) / ratio
+        tgt_dict['boxes'] = b['instances'].gt_boxes##box_ops.box_xyxy_to_cxcywh(b['instances'].gt_boxes) / ratio
+        tgt_dict['classes_info'] = torch.tensor(list(b['classes_info'].keys()))
         targets.append(tgt_dict)
+        if 'query' in b:
+            queries.append(b['query'])
     samples = nested_tensor_from_tensor_list(samples)
+    if len(queries) > 0:
+        queries = nested_tensor_from_tensor_list(queries)
+        return (samples, queries, targets)
     
     return (samples, targets)
 

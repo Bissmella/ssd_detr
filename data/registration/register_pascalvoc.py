@@ -66,6 +66,8 @@ def load_pascalvoc_instances(name: str, dirname: str, mode: str, split: str):
         classes = PASCAL_VOC_BASE_CLASSES
     elif mode == "Novel":
         classes = PASCAL_VOC_NOVEL_CLASSES
+    else:
+        classes = PASCAL_CLASSES
 
     # Needs to read many small annotation files. Makes sense at local
     annotation_dirname = PathManager.get_local_path(os.path.join(dirname, "Annotations/"))
@@ -146,9 +148,11 @@ def register_all_sbd(root):
         #("pascalvoc_val", "PascalVOC", "Point", "val"),
         #("pascalvoc_val", "PascalVOC", "Scribble", "val"),
         #("pascalvoc_val", "PascalVOC", "Polygon", "val"),
-        ("pascalvoc_val", "PascalVOC", "Base", "valtiny"),
+        ("pascalvoc_val", "PascalVOC", "Base", "val"),
         #("pascalvoc_val", "PascalVOC", "Novel", "val"),
-        ("pascalvoc_train", "PascalVOC", "Base", "traintiny"),
+        ("pascalvoc_train", "PascalVOC", "Base", "train"),
+        ("pascalvoc_uptrain", "PascalVOC", "All", "train"),
+        ("pascalvoc_upval", "PascalVOC", "All", "val"),
     ]
 
     for name, dirname, mode, split in SPLITS:

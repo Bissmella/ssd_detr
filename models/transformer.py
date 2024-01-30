@@ -22,6 +22,8 @@ from models.utils import LayerNorm2D
 from models.global_ape_decoder import build_global_ape_decoder
 from models.global_rpe_decomp_decoder import build_global_rpe_decomp_decoder
 
+from models.encoder import build_global_encoder
+
 
 class Transformer(nn.Module):
     def __init__(
@@ -38,6 +40,7 @@ class Transformer(nn.Module):
         proposal_in_stride=16,
         proposal_tgt_strides=[8, 16, 32, 64],
         args=None,
+        encoder = True,
     ):
         super().__init__()
 
@@ -54,6 +57,11 @@ class Transformer(nn.Module):
             self.decoder = build_global_rpe_decomp_decoder(args)
         else:
             raise NotImplementedError
+
+        if encoder:
+            self.encoder = build_global_encoder(args)
+        else:
+            self.encoder = None
 
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
 
@@ -241,14 +249,18 @@ class Transformer(nn.Module):
         return (reference_points, max_shape, enc_outputs_class,
                 enc_outputs_coord_unact, enc_outputs_delta, output_proposals)
 
-    def forward(self, srcs, masks, pos_embeds, query_embed=None, self_attn_mask=None):
+    def forward(self, srcs, masks, pos_embeds, query_embed=None, self_attn_mask=None, prmpts = None, prmpt_masks = None, prmpt_poses = None):
 
         # TODO: we may remove this loop as we only have one feature level
         # prepare input for encoder
+        
         src_flatten = []
         mask_flatten = []
         lvl_pos_embed_flatten = []
         spatial_shapes = []
+        prmpt_flatten = []
+        prmpt_mask_flatten = []
+        prmpt_pos_embed_flatten = []
         for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
             bs, c, h, w = src.shape
             spatial_shape = (h, w)
@@ -260,6 +272,9 @@ class Transformer(nn.Module):
             lvl_pos_embed_flatten.append(lvl_pos_embed)
             src_flatten.append(src)
             mask_flatten.append(mask)
+
+        
+
         src_flatten = torch.cat(src_flatten, 1)
         mask_flatten = torch.cat(mask_flatten, 1)
         lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)
@@ -270,9 +285,28 @@ class Transformer(nn.Module):
             (spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1])
         )
         valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
+        
+        for lvl, (prmpt, prmpt_mask, prmpt_pos) in enumerate(zip(prmpts, prmpt_masks, prmpt_poses)):
+            bs, c, h, w = prmpt.shape
+            prmpt = prmpt.flatten(2).transpose(1, 2)
+            mask = prmpt_mask.flatten(1)
+            pos_embed = prmpt_pos.flatten(2).transpose(1, 2)
+            prmpt_flatten.append(prmpt)
+            prmpt_mask_flatten.append(mask)
+            prmpt_pos_embed_flatten.append(pos_embed)
+        
+        prmpt_flatten = torch.cat(prmpt_flatten, 1)
+        prmpt_mask_flatten = torch.cat(prmpt_mask_flatten, 1)
+        prmpt_pos_embed_flatten = torch.cat(prmpt_pos_embed_flatten, 1)
+
+        img_attn_mask = mask_flatten.unsqueeze(2) * prmpt_mask_flatten.unsqueeze(1)
+        img_attn_mask = img_attn_mask.unsqueeze(1)
+        img_attn_mask = img_attn_mask.repeat(1, self.nhead, 1, 1)
+        img_attn_mask = img_attn_mask.view(prmpt_mask_flatten.shape[0] * self.nhead, mask_flatten.shape[1], -1)
+        memory = self.encoder(src_flatten, lvl_pos_embed_flatten,  prmpt_flatten, prmpt_mask_flatten, prmpt_pos_embed_flatten, img_mask = img_attn_mask)
 
         # prepare input for decoder
-        memory = src_flatten
+        #memory = src_flatten
         bs, _, c = memory.shape
         if self.two_stage:
             (reference_points, max_shape, enc_outputs_class,
@@ -307,7 +341,10 @@ class Transformer(nn.Module):
             query_embed,
             mask_flatten,
             self_attn_mask,
-            max_shape
+            max_shape,
+            # prmpt_flatten,
+            # prmpt_mask_flatten,
+            # prmpt_pos_embed_flatten,
         )
 
         inter_references_out = inter_references

@@ -2,7 +2,7 @@
 
 set -x
 
-SUB_EXEC="_7"
+SUB_EXEC="_8"
 FILE_NAME=$(basename $0)
 EXP_DIR=/home/bibahaduri/exps/${FILE_NAME%.*}${SUB_EXEC}
 PY_ARGS=${@:1}
@@ -13,6 +13,7 @@ python -u main.py \
     --two_stage \
     --mixed_selection \
     --look_forward_twice \
+    --upretrain \
     --num_queries_one2one 300 \
     --num_queries_one2many 1500 \
     --k_one2many 6 \
@@ -37,8 +38,4 @@ python -u main.py \
     --lr_decay_rate 0.9 \
     --weight_decay 0.05 \
     --wd_norm_mult 0.0 \
-    --reparam \
-    --set_cost_bbox 1.0 \
-    --bbox_loss_coef 1.0 \
-    --position_embedding sine_unnorm \
     ${PY_ARGS}

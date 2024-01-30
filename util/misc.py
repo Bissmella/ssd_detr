@@ -318,7 +318,7 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
     # TODO make this more general
     if tensor_list[0].ndim == 3:
         # TODO make it support different-sized images
-        max_size = _max_by_axis([list(img.shape) for img in tensor_list])
+        max_size = _max_by_axis([list(img.shape) for img in tensor_list])  ##[3, 518, 518] ##
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
         batch_shape = [len(tensor_list)] + max_size
         b, c, h, w = batch_shape
@@ -535,10 +535,11 @@ def find_latest_checkpoint(path, ext="pth"):
     latest = -1
     latest_path = None
     for checkpoint in checkpoints:
-        count = int(osp.basename(checkpoint).lstrip("checkpoint").split(".")[0])
-        if count > latest:
-            latest = count
-            latest_path = checkpoint
+        # count = int(osp.basename(checkpoint).lstrip("checkpoint").split(".")[0])
+        # if count > latest:
+        #     latest = count
+        #     latest_path = checkpoint
+        latest_path = checkpoint
     return latest_path
 
 

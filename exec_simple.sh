@@ -29,7 +29,7 @@ python -u main.py \
     --proposal_feature_levels 4 \
     --proposal_in_stride 16 \
     --pretrained_backbone_path /home/bibahaduri/pt_models/swinv2_small_1k_500k_mim_pt.pth \
-    --epochs 100 \
+    --epochs 150 \
     --lr_drop 11 \
     --warmup 1000 \
     --lr 2e-4 \
@@ -37,8 +37,4 @@ python -u main.py \
     --lr_decay_rate 0.9 \
     --weight_decay 0.05 \
     --wd_norm_mult 0.0 \
-    --reparam \
-    --set_cost_bbox 1.0 \
-    --bbox_loss_coef 1.0 \
-    --position_embedding sine_unnorm \
     ${PY_ARGS}

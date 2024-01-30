@@ -49,7 +49,7 @@ def get_args_parser():
         nargs="+",
     )
     parser.add_argument("--lr_linear_proj_mult", default=0.1, type=float)
-    parser.add_argument("--batch_size", default=4, type=int)
+    parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--weight_decay", default=1e-4, type=float)
     parser.add_argument("--epochs", default=50, type=int)
     parser.add_argument("--lr_drop", default=40, type=int)
@@ -258,7 +258,7 @@ def get_args_parser():
     parser.add_argument(
         "--start_epoch", default=0, type=int, metavar="N", help="start epoch"
     )
-    parser.add_argument("--num_workers", default=2, type=int)
+    parser.add_argument("--num_workers", default=8, type=int)
     parser.add_argument(
         "--cache_mode",
         default=False,
@@ -271,8 +271,10 @@ def get_args_parser():
     # topk for eval
     parser.add_argument("--topk", default=100, type=int)
 
+    parser.add_argument("--upretrain", action="store_true", default = False)
+
     # * training technologies
-    parser.add_argument("--use_fp16", default=False, action="store_true")
+    parser.add_argument("--use_fp16", action="store_true")
     parser.add_argument("--use_checkpoint", default=False, action="store_true")
 
     # * logging technologies
@@ -303,6 +305,11 @@ def main(args):
 
     model, criterion, postprocessors = build_model(args)
     model.to(device)
+
+    for key, param in model.named_parameters():
+        if key.startswith("backbone.0.net"):
+            param.requires_grad = False
+
 
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -337,8 +344,12 @@ def main(args):
     #     num_workers=args.num_workers,
     #     pin_memory=True,
     # )
-    data_loader_train = build_train_dataloader(args, ["pascalvoc_train_Base",])
-    data_loader_val = build_eval_dataloader(args, ["pascalvoc_val_Base",])
+    if args.upretrain:
+        data_loader_train = build_train_dataloader(args, ["pascalvoc_uptrain_All",])
+        data_loader_val = build_eval_dataloader(args, ["pascalvoc_upval_All",])
+    else:
+        data_loader_train = build_train_dataloader(args, ["pascalvoc_train_Base",])
+        data_loader_val = build_eval_dataloader(args, ["pascalvoc_val_Base",])
     # data_loader_val = DataLoader(
     #     dataset_val,
     #     args.batch_size,
@@ -383,7 +394,7 @@ def main(args):
     lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda0)
 
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model = torch.nn.parallel.DistributedDataParallel(model, find_unused_parameters=True, device_ids=[args.gpu])
         model_without_ddp = model.module
 
     if args.dataset_file == "coco_panoptic":
@@ -466,6 +477,7 @@ def main(args):
                 step=args.start_epoch * math.ceil(len(data_loader_train.dataset.dataset) / args.batch_size),
                 use_wandb=args.use_wandb,
                 reparam=args.reparam,
+                df = prmpt_df,
             )
 
     if args.eval:
@@ -480,6 +492,7 @@ def main(args):
             step=args.start_epoch * math.ceil(len(data_loader_train.dataset.dataset) / args.batch_size),
             use_wandb=args.use_wandb,
             reparam=args.reparam,
+            df = prmpt_df,
         )
         # if args.output_dir:
         #     utils.save_on_master(
@@ -495,9 +508,12 @@ def main(args):
         print(test_stats)
         return
 
+    for key, param in model.module.named_parameters():
+        if key.startswith("backbone.0.net"):
+            param.requires_grad = False
     print("Start training")
     start_time = time.time()
-    
+    #breakpoint()
     for epoch in range(args.start_epoch, args.epochs):
         # if args.distributed:
         #     sampler_train.set_epoch(epoch)
@@ -516,6 +532,7 @@ def main(args):
             use_fp16=args.use_fp16,
             scaler=scaler if args.use_fp16 else None,
             epoch_iter = epoch_iter,
+            df = prmpt_df,
         )
         if args.output_dir:
             checkpoint_paths = []#output_dir / "checkpoint.pth"]
@@ -547,6 +564,7 @@ def main(args):
             step=(epoch + 1) * math.ceil(len(data_loader_train.dataset.dataset) / args.batch_size),
             use_wandb=args.use_wandb,
             reparam=args.reparam,
+            df = prmpt_df,
         )
         
         log_stats = {

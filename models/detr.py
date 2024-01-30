@@ -133,7 +133,7 @@ class PlainDETR(nn.Module):
         self.num_queries_one2one = num_queries_one2one
         self.mixed_selection = mixed_selection
 
-    def forward(self, samples: NestedTensor):
+    def forward(self, samples: NestedTensor, prompts):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -160,6 +160,19 @@ class PlainDETR(nn.Module):
             masks.append(mask)
             assert mask is not None
 
+        #** TODO add same thing for the prompt
+        
+        prompts, prmpt_pos = self.backbone(prompts)
+        
+        prmpts = []
+        prmpt_masks = []
+        for l, feat in enumerate(prompts):
+            prmpt, mask = feat.decompose()
+            prmpts.append(self.input_proj[l](prmpt))
+            prmpt_masks.append(mask)
+            assert mask is not None
+        #**
+
         query_embeds = None
         if not self.two_stage or self.mixed_selection:
             query_embeds = self.query_embed.weight[0: self.num_queries, :]
@@ -182,7 +195,7 @@ class PlainDETR(nn.Module):
             enc_outputs_delta,
             output_proposals,
             max_shape
-        ) = self.transformer(srcs, masks, pos, query_embeds, self_attn_mask)
+        ) = self.transformer(srcs, masks, pos, query_embeds, self_attn_mask, prmpts, prmpt_masks, prmpt_pos)
 
         outputs_classes_one2one = []
         outputs_coords_one2one = []
@@ -249,7 +262,7 @@ class PlainDETR(nn.Module):
 
 
 class PlainDETRReParam(PlainDETR):
-    def forward(self, samples: NestedTensor):
+    def forward(self, samples: NestedTensor, prompts):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -280,7 +293,7 @@ class PlainDETRReParam(PlainDETR):
         prompts, prmpt_pos = self.backbone(prompts)
         prmpts = []
         prmpt_masks = []
-        for l, feat in enumerate(prmpts):
+        for l, feat in enumerate(prompts):
             prmpt, mask = feat.decompose()
             prmpts.append(self.input_proj[l](prmpt))
             prmpt_masks.append(mask)
@@ -309,7 +322,7 @@ class PlainDETRReParam(PlainDETR):
             enc_outputs_delta,
             output_proposals,
             max_shape
-        ) = self.transformer(srcs, masks, pos, query_embeds, self_attn_mask)
+        ) = self.transformer(srcs, masks, pos, query_embeds, self_attn_mask, prmpts, prmpt_masks, prmpt_pos)
 
         outputs_classes_one2one = []
         outputs_coords_one2one = []
@@ -723,7 +736,7 @@ class MLP(nn.Module):
 
 
 def build(args):
-    num_classes = 21 if args.dataset_file != "coco" else 91
+    num_classes = 3 if args.dataset_file != "coco" else 91
     if args.dataset_file == "coco_panoptic":
         num_classes = 250
     device = torch.device(args.device)

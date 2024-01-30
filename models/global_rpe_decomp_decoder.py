@@ -98,22 +98,27 @@ class GlobalCrossAttention(nn.Module):
 
         B_, N, C = k_input_flatten.shape
         k = self.k(k_input_flatten).reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        B_, N, C = k_input_flatten.shape
         v = self.v(v_input_flatten).reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
         B_, N, C = query.shape
         q = self.q(query).reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
         q = q * self.scale
-
+        
         attn = q @ k.transpose(-2, -1)
+        
         attn += rpe
         if input_padding_mask is not None:
             attn += input_padding_mask[:, None, None] * -100
 
         fmin, fmax = torch.finfo(attn.dtype).min, torch.finfo(attn.dtype).max
         torch.clip_(attn, min=fmin, max=fmax)
-
+        
         attn = self.softmax(attn)
+        
         attn = self.attn_drop(attn)
+        
         x = attn @ v
+        
 
         x = x.transpose(1, 2).reshape(B_, N, C)
         x = self.proj(x)
@@ -138,7 +143,7 @@ class GlobalDecoderLayer(nn.Module):
         super().__init__()
 
         self.norm_type = norm_type
-
+        self.n_heads = n_heads
         # global cross attention
         self.cross_attn = GlobalCrossAttention(d_model, n_heads, rpe_hidden_dim=rpe_hidden_dim,
                                                rpe_type=rpe_type, feature_stride=feature_stride,
@@ -150,6 +155,9 @@ class GlobalDecoderLayer(nn.Module):
         self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(d_model)
+        # self.img_attn = nn.MultiheadAttention(d_model, n_heads, dropout= dropout)
+        # self.dropout_img = nn.Dropout(dropout)
+        # self.norm_img = nn.LayerNorm(d_model)
 
         # ffn
         self.linear1 = nn.Linear(d_model, d_ffn)
@@ -173,10 +181,14 @@ class GlobalDecoderLayer(nn.Module):
         src_spatial_shapes,
         src_padding_mask=None,
         self_attn_mask=None,
+        prmpt = None,
+        prmpt_mask = None,
+        prmpt_pos_embed= None,
     ):
         # self attention
         tgt2 = self.norm2(tgt)
         q = k = self.with_pos_embed(tgt2, query_pos)
+        
         tgt2 = self.self_attn(
             q.transpose(0, 1),
             k.transpose(0, 1),
@@ -185,8 +197,23 @@ class GlobalDecoderLayer(nn.Module):
         )[0].transpose(0, 1)
         tgt = tgt + self.dropout2(tgt2)
 
+        # src2 = self.norm_img(src)
+        # img_attn_mask = src_padding_mask.unsqueeze(2) * prmpt_mask.unsqueeze(1)
+        # img_attn_mask = img_attn_mask.unsqueeze(1)
+        # img_attn_mask = img_attn_mask.repeat(1, self.n_heads, 1, 1)
+        # img_attn_mask = img_attn_mask.view(prmpt_mask.shape[0] * self.n_heads, src_padding_mask.shape[1], -1)
+        # src2 = self.img_attn(
+        #     src2.transpose(0, 1),
+        #     self.with_pos_embed(prmpt, prmpt_pos_embed).transpose(0, 1),
+        #     prmpt.transpose(0, 1),
+        #     attn_mask = img_attn_mask,
+        #     key_padding_mask = prmpt_mask
+        # )[0].transpose(0, 1)
+        # src = src + self.dropout_img(src2)
+        #combined_mask = src_padding_mask & prmpt_mask
         # global cross attention
         tgt2 = self.norm1(tgt)
+        
         tgt2 = self.cross_attn(
             self.with_pos_embed(tgt2, query_pos),
             reference_points,
@@ -202,7 +229,7 @@ class GlobalDecoderLayer(nn.Module):
         tgt2 = self.linear2(self.dropout3(self.activation(self.linear1(tgt2))))
         tgt = tgt + self.dropout4(tgt2)
 
-        return tgt
+        return tgt#, src
 
     def forward_post(
         self,
@@ -214,6 +241,9 @@ class GlobalDecoderLayer(nn.Module):
         src_spatial_shapes,
         src_padding_mask=None,
         self_attn_mask=None,
+        prmpt = None,
+        prmpt_mask = None,
+        prmpt_pos_embed= None,
     ):
         # self attention
         q = k = self.with_pos_embed(tgt, query_pos)
@@ -225,6 +255,16 @@ class GlobalDecoderLayer(nn.Module):
         )[0].transpose(0, 1)
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
+
+        # src2 = self.img_attn(
+        #     src,
+        #     self.with_pos_embed(prmpt, prmpt_pos_embed),
+        #     prmpt,
+        #     key_padding_mask = prmpt_mask.transpose(0, 1),
+        # )[0]
+        # src = src + self.dropout_img(src2)
+        # src = self.norm_img(src)
+        
 
         # cross attention
         tgt2 = self.cross_attn(
@@ -255,13 +295,16 @@ class GlobalDecoderLayer(nn.Module):
         src_spatial_shapes,
         src_padding_mask=None,
         self_attn_mask=None,
+        prmpt = None,
+        prmpt_mask = None,
+        prmpt_pos_embed= None,
     ):
         if self.norm_type == "pre_norm":
             return self.forward_pre(tgt, query_pos, reference_points, src, src_pos_embed, src_spatial_shapes,
-                                    src_padding_mask, self_attn_mask)
+                                    src_padding_mask, self_attn_mask, prmpt, prmpt_mask, prmpt_pos_embed)
         if self.norm_type == "post_norm":
             return self.forward_post(tgt, query_pos, reference_points, src, src_pos_embed, src_spatial_shapes,
-                                     src_padding_mask, self_attn_mask)
+                                     src_padding_mask, self_attn_mask, prmpt, prmpt_mask, prmpt_pos_embed)
 
 
 class GlobalDecoder(nn.Module):
@@ -320,6 +363,9 @@ class GlobalDecoder(nn.Module):
         src_padding_mask=None,
         self_attn_mask=None,
         max_shape=None,
+        prmpt = None,
+        prmpt_maks = None,
+        prmpt_pos_embed = None,
     ):
         output = tgt
 
@@ -361,6 +407,9 @@ class GlobalDecoder(nn.Module):
                     src_spatial_shapes,
                     src_padding_mask,
                     self_attn_mask,
+                    prmpt,
+                    prmpt_maks,
+                    prmpt_pos_embed
                 )
 
             if self.final_layer_norm is not None:
