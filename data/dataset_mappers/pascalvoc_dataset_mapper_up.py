@@ -237,7 +237,7 @@ class PascalVOCPretrainDatasetMapperIX:
         dataset_dict['height'] = image.size[1]
 
         query, x, y, sw, sh = get_random_patch_from_img(image)
-
+        #something nonsense
         # if not self.is_train:
         target = {}
         boxes = [[x, y, x + sw, y + sh]]
