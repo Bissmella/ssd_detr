@@ -242,9 +242,12 @@ class PascalVOCPretrainDatasetMapperIX:
         target = {}
         boxes = [[x, y, x + sw, y + sh]]
         
-        class_ids = [1]#[ann_dict['category_id'] for ann_dict in dataset_dict['annotations']]
-        target['boxes'] = torch.tensor(boxes)
-        target['labels'] = torch.tensor(class_ids)
+        orig_boxes = torch.tensor([data_dict['bbox'] for data_dict in dataset_dict['annotations']])
+        orig_classes = torch.tensor([ann_dict['category_id'] for ann_dict in dataset_dict['annotations']])
+        orig_classes_zeros = torch.zeros_like(orig_classes)
+        class_ids = [1]#[ann_dict['category_id'] for ann_dict in dataset_dict['annotations']]    
+        target['boxes'] = torch.cat((orig_boxes, torch.tensor(boxes)), dim = 0)
+        target['labels'] = torch.cat((orig_classes_zeros, torch.tensor(class_ids)),dim=0)
         
         image, target = self.transform_img(image, target)
         #target['boxes'] = box_cxcywh_to_xyxy(target['boxes']) * torch.tensor([target['size'][1], target['size'][0], target['size'][1], target['size'][0]])
@@ -259,6 +262,7 @@ class PascalVOCPretrainDatasetMapperIX:
 
         instances.gt_boxes = target['boxes']
         instances.gt_classes = target['labels']
+        instances.con_classes = orig_classes    ##original classes but just for contrastive loss
             
 
         # # To have information about the classes existing in this image for use in getting apropriate prompt/support
