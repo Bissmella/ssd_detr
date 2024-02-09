@@ -49,7 +49,7 @@ def get_args_parser():
         nargs="+",
     )
     parser.add_argument("--lr_linear_proj_mult", default=0.1, type=float)
-    parser.add_argument("--batch_size", default=8, type=int)
+    parser.add_argument("--batch_size", default=16, type=int)
     parser.add_argument("--weight_decay", default=1e-4, type=float)
     parser.add_argument("--epochs", default=50, type=int)
     parser.add_argument("--lr_drop", default=40, type=int)
@@ -271,7 +271,7 @@ def get_args_parser():
     # topk for eval
     parser.add_argument("--topk", default=100, type=int)
 
-    parser.add_argument("--upretrain", action="store_true", default = False)
+    parser.add_argument("--upretrain", action="store_true", default = True)
 
     # * training technologies
     parser.add_argument("--use_fp16", action="store_true")

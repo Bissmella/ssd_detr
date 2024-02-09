@@ -1,0 +1,12 @@
+/var/lib/oar/.batch_job_bashrc: line 5: /home/bibahaduri/.bashrc: No such file or directory
+/var/lib/oar/.batch_job_bashrc: line 5: /home/bibahaduri/.bashrc: No such file or directory
++ SUB_EXEC=_8
+++ basename /home/bibahaduri/plain_detr/exec_pretrain.sh
++ FILE_NAME=exec_pretrain.sh
++ EXP_DIR=/home/bibahaduri/exps/exec_pretrain_8
++ PY_ARGS=
++ python -u main.py --output_dir /home/bibahaduri/exps/exec_pretrain_8 --with_box_refine --two_stage --mixed_selection --look_forward_twice --upretrain --num_queries_one2one 300 --num_queries_one2many 1500 --k_one2many 6 --lambda_one2many 1.0 --dropout 0.0 --norm_type pre_norm --backbone swin_v2_small_window12to16_2global --drop_path_rate 0.1 --upsample_backbone_output --upsample_stride 16 --num_feature_levels 1 --decoder_type global_rpe_decomp --decoder_rpe_type linear --proposal_feature_levels 4 --proposal_in_stride 16 --pretrained_backbone_path /home/bibahaduri/pt_models/swinv2_small_1k_500k_mim_pt.pth --epochs 100 --lr_drop 11 --warmup 1000 --lr 2e-4 --use_layerwise_decay --lr_decay_rate 0.9 --weight_decay 0.05 --wd_norm_mult 0.0
+Traceback (most recent call last):
+  File "/home/bibahaduri/plain_detr/main.py", line 25, in <module>
+    import torch
+ModuleNotFoundError: No module named 'torch'

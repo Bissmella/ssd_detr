@@ -47,7 +47,7 @@ from .dataset_mappers.pascalvoc_dataset_mapper_up import PascalVOCPretrainDatase
 from .evaluation.instance_evaluation import InstanceSegEvaluator
 import sys
 sys.path.append("/home/bibahaduri/plain_detr/util")
-from util.misc import nested_tensor_from_tensor_list
+from util.misc import nested_tensor_from_tensor_list, nested_tensor_from_2tensor_lists
 #                                             ClassificationEvaluator, 
 #                                             SemSegEvaluator, 
 #                                             RetrievalEvaluator, 
@@ -649,10 +649,11 @@ def batch_collator_eval(batch):
         targets.append(tgt_dict)
         if 'query' in b:
             queries.append(b['query'])
-    samples = nested_tensor_from_tensor_list(samples)
+    
     if len(queries) > 0:
-        queries = nested_tensor_from_tensor_list(queries)
+        samples, queries = nested_tensor_from_2tensor_lists(samples, queries)
         return (samples, queries, targets)
+    samples = nested_tensor_from_tensor_list(samples)
     return (samples, targets)
 
 def batch_collator_train(batch):
@@ -681,10 +682,9 @@ def batch_collator_train(batch):
         targets.append(tgt_dict)
         if 'query' in b:
             queries.append(b['query'])
-    samples = nested_tensor_from_tensor_list(samples)
     if len(queries) > 0:
-        queries = nested_tensor_from_tensor_list(queries)
+        samples, queries = nested_tensor_from_2tensor_lists(samples, queries)
         return (samples, queries, targets)
-    
+    samples = nested_tensor_from_tensor_list(samples)
     return (samples, targets)
 

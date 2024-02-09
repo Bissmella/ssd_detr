@@ -429,6 +429,7 @@ class SetCriterion(nn.Module):
         self.losses = losses
         self.focal_alpha = focal_alpha
         self.loss_bbox_type = 'l1' if (not reparam) else 'reparam'
+        self.con_temperature = 0.5
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (NLL)
@@ -528,6 +529,41 @@ class SetCriterion(nn.Module):
         )
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses
+    
+
+   
+    def loss_contrastive(self, query, key, negatives, reduction_override=None, avg_factor=None):
+        """
+        contrastive loss gotten from https://github.com/liming-ai/AlignDet/blob/master/AlignDet/models/losses/contrastive_loss.py
+
+        """
+        assert reduction_override in (None, 'none', 'mean', 'sum')
+        reduction = (
+            reduction_override if reduction_override else self.reduction)
+
+        num_query = query.size(0)
+        num_key = key.size(0)
+
+        # query: (m, feat_dim)
+        # key  : (n, feat_dim)
+        # neg  : (k, feat_dim)
+        query = F.normalize(query)
+        key = F.normalize(key)
+        neg = F.normalize(negatives.detach())
+
+        key = key.unsqueeze_(1)                              # (n, feat_dim) => (n, 1, feat_dim)
+        neg = neg.unsqueeze_(0).expand(num_key, -1, -1)      # (k, feat_dim) => (1, k, feat_dim) => (n, k, feat_dim)
+        feats = torch.cat([key, neg], dim=1)                 # (n, 1, feat_dim) + (n, k, feat_dim)  => (n, 1+k, feat_dim)
+
+        query = query.unsqueeze(0).expand(num_key, -1, -1)   # (m, feat_dim) => (n, m, feat_dim)
+        logits = torch.bmm(query, feats.permute(0, 2, 1))    # (n, m, feat_dim) @ (n, feat_dim, 1+k) => (n, m, 1+k)
+        logits = logits.reshape(num_query*num_key, -1)       # (n, m, 1+k) => (n*m, 1+k)
+        logits = logits / self.con_temperature
+
+        labels = torch.zeros((num_query*num_key, ), dtype=torch.long).to(query.device)
+        loss = F.cross_entropy(logits, labels)
+        return loss ##* self.loss_weight
+
 
     def loss_masks(self, outputs, targets, indices, num_boxes):
         """Compute the losses related to the masks: the focal loss and the dice loss.

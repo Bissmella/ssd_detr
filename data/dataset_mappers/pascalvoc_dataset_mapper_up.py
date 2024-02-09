@@ -259,6 +259,7 @@ class PascalVOCPretrainDatasetMapperIX:
 
         instances.gt_boxes = target['boxes']
         instances.gt_classes = target['labels']
+        #instances.con_classes = orig_class_ids    ##original classes but just for contrastive loss
             
 
         # # To have information about the classes existing in this image for use in getting apropriate prompt/support

@@ -40,7 +40,7 @@ class Transformer(nn.Module):
         proposal_in_stride=16,
         proposal_tgt_strides=[8, 16, 32, 64],
         args=None,
-        encoder = True,
+        encoder = False,
     ):
         super().__init__()
 
@@ -303,10 +303,10 @@ class Transformer(nn.Module):
         img_attn_mask = img_attn_mask.unsqueeze(1)
         img_attn_mask = img_attn_mask.repeat(1, self.nhead, 1, 1)
         img_attn_mask = img_attn_mask.view(prmpt_mask_flatten.shape[0] * self.nhead, mask_flatten.shape[1], -1)
-        memory = self.encoder(src_flatten, lvl_pos_embed_flatten,  prmpt_flatten, prmpt_mask_flatten, prmpt_pos_embed_flatten, img_mask = img_attn_mask)
+        #memory = self.encoder(src_flatten, lvl_pos_embed_flatten,  prmpt_flatten, prmpt_mask_flatten, prmpt_pos_embed_flatten, img_mask = img_attn_mask)
 
         # prepare input for decoder
-        #memory = src_flatten
+        memory = src_flatten
         bs, _, c = memory.shape
         if self.two_stage:
             (reference_points, max_shape, enc_outputs_class,
@@ -342,9 +342,9 @@ class Transformer(nn.Module):
             mask_flatten,
             self_attn_mask,
             max_shape,
-            # prmpt_flatten,
-            # prmpt_mask_flatten,
-            # prmpt_pos_embed_flatten,
+            prmpt_flatten,
+            prmpt_mask_flatten,
+            prmpt_pos_embed_flatten,
         )
 
         inter_references_out = inter_references
