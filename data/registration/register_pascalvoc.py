@@ -23,24 +23,25 @@ PASCAL_CLASSES = (
 
 
 PASCAL_VOC_BASE_CLASSES = (
-        "aeroplane",
         "bicycle",
+        "bird",
         "boat",
         "bottle",
+        "bus",
         "car",
-        "cat",
         "chair",
         "diningtable",
         "dog",
         "horse",
+        "motorbike",
         "person",
         "pottedplant",
-        "sheep",
+        "sofa",
         "train",
         "tvmonitor",
         )
 
-PASCAL_VOC_NOVEL_CLASSES = ("bird", "bus", "cow", "motorbike", "sofa")
+PASCAL_VOC_NOVEL_CLASSES = ("aeroplane", "cat",  "cow", "sheep", )
 
 
 def get_labels_with_sizes(x):
