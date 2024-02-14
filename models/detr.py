@@ -103,7 +103,7 @@ class PlainDETR(nn.Module):
         self.class_embed.bias.data = torch.ones(num_classes) * bias_value
         nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
         nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
-        for layer in self.feature_embed:
+        for layer in self.feature_embed.layers:
             nn.init.xavier_uniform_(layer.weight.data, gain=1)
             nn.init.constant_(layer.bias.data, 0)
         for proj in self.input_proj:
@@ -266,13 +266,13 @@ class PlainDETR(nn.Module):
         return out
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord):
+    def _set_aux_loss(self, outputs_class, outputs_coord, output_features):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
         return [
-            {"pred_logits": a, "pred_boxes": b}
-            for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
+            {"pred_logits": a, "pred_boxes": b, "pred_features": c}
+            for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], output_features[:-1])
         ]
 
 
@@ -548,7 +548,7 @@ class SetCriterion(nn.Module):
     def con_loss_calc(self, query, key, negatives, reduction_override=None, avg_factor=None):
         assert reduction_override in (None, 'none', 'mean', 'sum')
         reduction = (
-            reduction_override if reduction_override else self.reduction)
+            reduction_override if reduction_override else 'mean')##self.reduction)
 
         num_query = query.size(0)
         num_key = key.size(0)
@@ -573,25 +573,21 @@ class SetCriterion(nn.Module):
         loss = F.cross_entropy(logits, labels)
         return loss ##* self.loss_weight
     
-    def loss_contrastive(self, outputs, targets, indices, num_boxes, log=True):
+    def loss_contrastive(self, outputs, targets, indices, num_boxes, log=True, kone2many =1):
         """
         contrastive loss gotten from https://github.com/liming-ai/AlignDet/blob/master/AlignDet/models/losses/contrastive_loss.py
 
         """
+        outputs_feats = outputs['pred_features']
         ooi_indices = []
         tens1_c = 0
         tens2_c = 0
         for i, (tens1, tens2) in enumerate(indices):
-            id_max = torch.nonzero(tens2 == 0).squeeze()#torch.argmax(tens2)
-            if len(id_max) > 1:
-                breakpoint()
-            id_max = id_max[0].item()
-            tens2 = tens2 - 1
             tens1 = tens1 + tens1_c
             tens2 = tens2 + tens2_c
             tens1_c = tens1_c + len(targets[i]["classes"])
-            tens2_c = tens2_c + outputs.shape[1]
-            ooi_indices.append(torch.cat([tens1[:id_max], tens1[id_max + 1:]]), torch.cat([tens2[:id_max], tens2[id_max + 1:]]))
+            tens2_c = tens2_c + outputs_feats.shape[1]
+            ooi_indices.append((tens1, tens2))##\[tens1[:id_max], tens1[id_max + 1:]]), torch.cat([tens2[:id_max], tens2[id_max + 1:]])))
         
         tensor1s = [t[0] for t in ooi_indices]
         tensor2s = [t[1] for t in ooi_indices]
@@ -601,14 +597,15 @@ class SetCriterion(nn.Module):
 
         
         target_classes = torch.cat([t["classes"] for t in targets])
+        
         online_labels = target_classes[lbl_indices]
-        outputs_features = outputs["features"].flatten(0, 1)
+        outputs_features = outputs_feats.flatten(0, 1)
         ##copy rest from align Det
         loss_con_ = 0.
         num_valid_labels = 0
         for label in torch.unique(online_labels):
             # ignore the background class
-            if label == self.num_classes:
+            if label == -1: #  -1 is place holder for prompt   self.num_classes:
                 continue
 
             #                    label                      sample           #
@@ -622,7 +619,8 @@ class SetCriterion(nn.Module):
             query_inds = pred_indices[query_inds]
             query = outputs_features[query_inds]
             key = query
-            neg = online_neg_inds
+            neg_inds = pred_indices[online_neg_inds]
+            neg = outputs_features[neg_inds]
             
             loss_con_ = loss_con_ + self.con_loss_calc(query, key, neg)
         losses = {}
@@ -688,6 +686,7 @@ class SetCriterion(nn.Module):
             "cardinality": self.loss_cardinality,
             "boxes": self.loss_boxes,
             "masks": self.loss_masks,
+            "contrastive": self.loss_contrastive,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -757,6 +756,9 @@ class SetCriterion(nn.Module):
                 if loss == "labels":
                     # Logging is enabled only for the last layer
                     kwargs["log"] = False
+                if loss == "contrastive":
+                    #no contrastive loss for encoder output
+                    continue
                 l_dict = self.get_loss(
                     loss, enc_outputs, bin_targets, indices, num_boxes, **kwargs
                 )
@@ -885,7 +887,7 @@ def build(args):
         new_dict[key + "_one2many"] = value
     weight_dict = new_dict
 
-    losses = ["labels", "boxes", "cardinality"]
+    losses = ["labels", "boxes", "cardinality", "contrastive"]
     if args.masks:
         losses += ["masks"]
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25

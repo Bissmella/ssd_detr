@@ -314,6 +314,34 @@ def _max_by_axis(the_list):
     return maxes
 
 
+def nested_tensor_from_2tensor_lists(tensor_list1: List[Tensor], tensor_list2: List[Tensor]):
+    if tensor_list1[0].ndim == 3 and tensor_list2[0].ndim == 3:
+        max_size1 = _max_by_axis([list(img.shape) for img in tensor_list1])
+        max_size2 = _max_by_axis([list(img.shape) for img in tensor_list2])
+        max_size = _max_by_axis([max_size1, max_size2])
+        batch_shape = [len(tensor_list1)] + max_size
+        b, c, h, w = batch_shape
+        dtype = tensor_list1[0].dtype
+        device = tensor_list1[0].device
+        tensor1 = torch.zeros(batch_shape, dtype=dtype, device=device)
+        mask1 = torch.ones((b, h, w), dtype=torch.bool, device=device)
+        for img, pad_img, m in zip(tensor_list1, tensor1, mask1):
+            pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
+            m[: img.shape[1], : img.shape[2]] = False
+        batch_shape = [len(tensor_list2)] + max_size
+        b, c, h, w = batch_shape
+        dtype = tensor_list2[0].dtype
+        device = tensor_list2[0].device
+        tensor2 = torch.zeros(batch_shape, dtype=dtype, device=device)
+        mask2 = torch.ones((b, h, w), dtype=torch.bool, device=device)
+        for img, pad_img, m in zip(tensor_list2, tensor2, mask2):
+            pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
+            m[: img.shape[1], : img.shape[2]] = False
+    else:
+        raise ValueError("not supported")
+    return (NestedTensor(tensor1, mask1), NestedTensor(tensor2, mask2))
+
+
 def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
     # TODO make this more general
     if tensor_list[0].ndim == 3:
