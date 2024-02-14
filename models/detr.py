@@ -59,6 +59,7 @@ class PlainDETR(nn.Module):
         num_queries_one2one=300,
         num_queries_one2many=0,
         mixed_selection=False,
+        feature_dim=128,
     ):
         """ Initializes the model.
         Parameters:
@@ -80,6 +81,7 @@ class PlainDETR(nn.Module):
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        self.feature_embed = MLP(hidden_dim, hidden_dim, feature_dim, 3)
         self.num_feature_levels = num_feature_levels
         if not two_stage:
             self.query_embed = nn.Embedding(num_queries, hidden_dim * 2)
@@ -101,6 +103,9 @@ class PlainDETR(nn.Module):
         self.class_embed.bias.data = torch.ones(num_classes) * bias_value
         nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
         nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
+        for layer in self.feature_embed:
+            nn.init.xavier_uniform_(layer.weight.data, gain=1)
+            nn.init.constant_(layer.bias.data, 0)
         for proj in self.input_proj:
             nn.init.xavier_uniform_(proj[0].weight, gain=1)
             nn.init.constant_(proj[0].bias, 0)
@@ -111,6 +116,8 @@ class PlainDETR(nn.Module):
             if two_stage
             else transformer.decoder.num_layers
         )
+        # The feature embedding is not refined at each stage as the number of parameters will increase too much
+        self.feature_embed = nn.ModuleList([self.feature_embed for _ in range(num_pred)])
         if with_box_refine:
             self.class_embed = _get_clones(self.class_embed, num_pred)
             self.bbox_embed = _get_clones(self.bbox_embed, num_pred)
@@ -201,6 +208,8 @@ class PlainDETR(nn.Module):
         outputs_coords_one2one = []
         outputs_classes_one2many = []
         outputs_coords_one2many = []
+        outputs_features_one2one = []
+        outputs_features_one2many = []
         for lvl in range(hs.shape[0]):
             if lvl == 0:
                 reference = init_reference
@@ -208,6 +217,7 @@ class PlainDETR(nn.Module):
                 reference = inter_references[lvl - 1]
             reference = inverse_sigmoid(reference)
             outputs_class = self.class_embed[lvl](hs[lvl])
+            outputs_feature = self.feature_embed[lvl](hs[lvl])
             tmp = self.bbox_embed[lvl](hs[lvl])
             if reference.shape[-1] == 4:
                 tmp += reference
@@ -218,6 +228,9 @@ class PlainDETR(nn.Module):
 
             outputs_classes_one2one.append(outputs_class[:, 0: self.num_queries_one2one])
             outputs_classes_one2many.append(outputs_class[:, self.num_queries_one2one:])
+
+            outputs_features_one2one.append(outputs_feature[:, 0: self.num_queries_one2one])
+            outputs_features_one2many.append(outputs_feature[:, self.num_queries_one2one:])
 
             outputs_coords_one2one.append(outputs_coord[:, 0: self.num_queries_one2one])
             outputs_coords_one2many.append(outputs_coord[:, self.num_queries_one2one:])
@@ -233,13 +246,15 @@ class PlainDETR(nn.Module):
             "pred_boxes": outputs_coords_one2one[-1],
             "pred_logits_one2many": outputs_classes_one2many[-1],
             "pred_boxes_one2many": outputs_coords_one2many[-1],
+            "pred_features": outputs_features_one2one[-1],
+            "pred_features_one2many": outputs_features_one2many[-1],
         }
         if self.aux_loss:
             out["aux_outputs"] = self._set_aux_loss(
-                outputs_classes_one2one, outputs_coords_one2one
+                outputs_classes_one2one, outputs_coords_one2one, outputs_features_one2one
             )
             out["aux_outputs_one2many"] = self._set_aux_loss(
-                outputs_classes_one2many, outputs_coords_one2many
+                outputs_classes_one2many, outputs_coords_one2many, outputs_features_one2many
             )
 
         if self.two_stage:
@@ -429,6 +444,7 @@ class SetCriterion(nn.Module):
         self.losses = losses
         self.focal_alpha = focal_alpha
         self.loss_bbox_type = 'l1' if (not reparam) else 'reparam'
+        self.con_temperature = 0.5
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (NLL)
@@ -528,6 +544,92 @@ class SetCriterion(nn.Module):
         )
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses
+    
+    def con_loss_calc(self, query, key, negatives, reduction_override=None, avg_factor=None):
+        assert reduction_override in (None, 'none', 'mean', 'sum')
+        reduction = (
+            reduction_override if reduction_override else self.reduction)
+
+        num_query = query.size(0)
+        num_key = key.size(0)
+
+        # query: (m, feat_dim)
+        # key  : (n, feat_dim)
+        # neg  : (k, feat_dim)
+        query = F.normalize(query)
+        key = F.normalize(key)
+        neg = F.normalize(negatives.detach())
+
+        key = key.unsqueeze_(1)                              # (n, feat_dim) => (n, 1, feat_dim)
+        neg = neg.unsqueeze_(0).expand(num_key, -1, -1)      # (k, feat_dim) => (1, k, feat_dim) => (n, k, feat_dim)
+        feats = torch.cat([key, neg], dim=1)                 # (n, 1, feat_dim) + (n, k, feat_dim)  => (n, 1+k, feat_dim)
+
+        query = query.unsqueeze(0).expand(num_key, -1, -1)   # (m, feat_dim) => (n, m, feat_dim)
+        logits = torch.bmm(query, feats.permute(0, 2, 1))    # (n, m, feat_dim) @ (n, feat_dim, 1+k) => (n, m, 1+k)
+        logits = logits.reshape(num_query*num_key, -1)       # (n, m, 1+k) => (n*m, 1+k)
+        logits = logits / self.con_temperature
+
+        labels = torch.zeros((num_query*num_key, ), dtype=torch.long).to(query.device)
+        loss = F.cross_entropy(logits, labels)
+        return loss ##* self.loss_weight
+    
+    def loss_contrastive(self, outputs, targets, indices, num_boxes, log=True):
+        """
+        contrastive loss gotten from https://github.com/liming-ai/AlignDet/blob/master/AlignDet/models/losses/contrastive_loss.py
+
+        """
+        ooi_indices = []
+        tens1_c = 0
+        tens2_c = 0
+        for i, (tens1, tens2) in enumerate(indices):
+            id_max = torch.nonzero(tens2 == 0).squeeze()#torch.argmax(tens2)
+            if len(id_max) > 1:
+                breakpoint()
+            id_max = id_max[0].item()
+            tens2 = tens2 - 1
+            tens1 = tens1 + tens1_c
+            tens2 = tens2 + tens2_c
+            tens1_c = tens1_c + len(targets[i]["classes"])
+            tens2_c = tens2_c + outputs.shape[1]
+            ooi_indices.append(torch.cat([tens1[:id_max], tens1[id_max + 1:]]), torch.cat([tens2[:id_max], tens2[id_max + 1:]]))
+        
+        tensor1s = [t[0] for t in ooi_indices]
+        tensor2s = [t[1] for t in ooi_indices]
+
+        pred_indices = torch.cat(tensor1s, dim=0)
+        lbl_indices = torch.cat(tensor2s, dim=0)
+
+        
+        target_classes = torch.cat([t["classes"] for t in targets])
+        online_labels = target_classes[lbl_indices]
+        outputs_features = outputs["features"].flatten(0, 1)
+        ##copy rest from align Det
+        loss_con_ = 0.
+        num_valid_labels = 0
+        for label in torch.unique(online_labels):
+            # ignore the background class
+            if label == self.num_classes:
+                continue
+
+            #                    label                      sample           #
+            query_inds = (online_labels == label) #* (online_label_weights > 0)
+            #key_inds   = (target_labels == label) * (target_label_weights > 0)
+            online_neg_inds = (online_labels != label) #* (online_label_weights > 0)
+            #target_neg_inds = (target_labels != label) * (target_label_weights > 0)
+
+            num_valid_labels += 1
+
+            query_inds = pred_indices[query_inds]
+            query = outputs_features[query_inds]
+            key = query
+            neg = online_neg_inds
+            
+            loss_con_ = loss_con_ + self.con_loss_calc(query, key, neg)
+        losses = {}
+        losses['loss_con'] = loss_con_ / num_valid_labels   #TODO  change 'loss_cls' to something else
+        return losses
+
+
 
     def loss_masks(self, outputs, targets, indices, num_boxes):
         """Compute the losses related to the masks: the focal loss and the dice loss.
