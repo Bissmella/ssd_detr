@@ -59,6 +59,7 @@ class PlainDETR(nn.Module):
         num_queries_one2one=300,
         num_queries_one2many=0,
         mixed_selection=False,
+        pre_train = False,
         feature_dim=128,
     ):
         """ Initializes the model.
@@ -81,7 +82,8 @@ class PlainDETR(nn.Module):
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
-        self.feature_embed = MLP(hidden_dim, hidden_dim, feature_dim, 3)
+        if pre_train:
+            self.feature_embed = MLP(hidden_dim, hidden_dim, feature_dim, 3)
         self.num_feature_levels = num_feature_levels
         if not two_stage:
             self.query_embed = nn.Embedding(num_queries, hidden_dim * 2)
@@ -97,15 +99,17 @@ class PlainDETR(nn.Module):
         self.aux_loss = aux_loss
         self.with_box_refine = with_box_refine
         self.two_stage = two_stage
+        self.pre_train = pre_train
 
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
         self.class_embed.bias.data = torch.ones(num_classes) * bias_value
         nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
         nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
-        for layer in self.feature_embed.layers:
-            nn.init.xavier_uniform_(layer.weight.data, gain=1)
-            nn.init.constant_(layer.bias.data, 0)
+        if pre_train:
+            for layer in self.feature_embed.layers:
+                nn.init.xavier_uniform_(layer.weight.data, gain=1)
+                nn.init.constant_(layer.bias.data, 0)
         for proj in self.input_proj:
             nn.init.xavier_uniform_(proj[0].weight, gain=1)
             nn.init.constant_(proj[0].bias, 0)
@@ -116,11 +120,12 @@ class PlainDETR(nn.Module):
             if two_stage
             else transformer.decoder.num_layers
         )
-        # The feature embedding is not refined at each stage as the number of parameters will increase too much
-        self.feature_embed = nn.ModuleList([self.feature_embed for _ in range(num_pred)])
+        
         if with_box_refine:
             self.class_embed = _get_clones(self.class_embed, num_pred)
             self.bbox_embed = _get_clones(self.bbox_embed, num_pred)
+            if pre_train:
+                self.feature_embed = _get_clones(self.feature_embed, num_pred)
             nn.init.constant_(self.bbox_embed[0].layers[-1].bias.data[2:], -2.0)
             # hack implementation for iterative bounding box refinement
             self.transformer.decoder.bbox_embed = self.bbox_embed
@@ -208,8 +213,9 @@ class PlainDETR(nn.Module):
         outputs_coords_one2one = []
         outputs_classes_one2many = []
         outputs_coords_one2many = []
-        outputs_features_one2one = []
-        outputs_features_one2many = []
+        if self.pre_train:
+            outputs_features_one2one = []
+            outputs_features_one2many = []
         for lvl in range(hs.shape[0]):
             if lvl == 0:
                 reference = init_reference
@@ -217,7 +223,8 @@ class PlainDETR(nn.Module):
                 reference = inter_references[lvl - 1]
             reference = inverse_sigmoid(reference)
             outputs_class = self.class_embed[lvl](hs[lvl])
-            outputs_feature = self.feature_embed[lvl](hs[lvl])
+            if self.pre_train:
+                outputs_feature = self.feature_embed[lvl](hs[lvl])
             tmp = self.bbox_embed[lvl](hs[lvl])
             if reference.shape[-1] == 4:
                 tmp += reference
@@ -229,8 +236,9 @@ class PlainDETR(nn.Module):
             outputs_classes_one2one.append(outputs_class[:, 0: self.num_queries_one2one])
             outputs_classes_one2many.append(outputs_class[:, self.num_queries_one2one:])
 
-            outputs_features_one2one.append(outputs_feature[:, 0: self.num_queries_one2one])
-            outputs_features_one2many.append(outputs_feature[:, self.num_queries_one2one:])
+            if self.pre_train:
+                outputs_features_one2one.append(outputs_feature[:, 0: self.num_queries_one2one])
+                outputs_features_one2many.append(outputs_feature[:, self.num_queries_one2one:])
 
             outputs_coords_one2one.append(outputs_coord[:, 0: self.num_queries_one2one])
             outputs_coords_one2many.append(outputs_coord[:, self.num_queries_one2one:])
@@ -246,9 +254,14 @@ class PlainDETR(nn.Module):
             "pred_boxes": outputs_coords_one2one[-1],
             "pred_logits_one2many": outputs_classes_one2many[-1],
             "pred_boxes_one2many": outputs_coords_one2many[-1],
-            "pred_features": outputs_features_one2one[-1],
-            "pred_features_one2many": outputs_features_one2many[-1],
         }
+        if self.pre_train:
+            out['pred_features'] = outputs_features_one2one[-1]
+            out['pred_features_one2many'] = outputs_features_one2many[-1]
+
+        if not self.pre_train:
+            outputs_features_one2many = None
+            outputs_features_one2one = None
         if self.aux_loss:
             out["aux_outputs"] = self._set_aux_loss(
                 outputs_classes_one2one, outputs_coords_one2one, outputs_features_one2one
@@ -266,7 +279,7 @@ class PlainDETR(nn.Module):
         return out
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord, output_features):
+    def _set_aux_loss(self, outputs_class, outputs_coord, output_features = None):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
@@ -866,6 +879,7 @@ def build(args):
         num_queries_one2one=args.num_queries_one2one,
         num_queries_one2many=args.num_queries_one2many,
         mixed_selection=args.mixed_selection,
+        pre_train=args.upretrain
     )
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
@@ -874,8 +888,9 @@ def build(args):
         "loss_ce": args.cls_loss_coef,
         "loss_bbox": args.bbox_loss_coef,
         "loss_giou": args.giou_loss_coef,
-        "loss_con": 2                   #TODO contrastive loss coefficient hardcoded to 2
     }
+    if args.upretrain:
+        weight_dict['loss_con'] = 2  #TODO contrastive loss coefficient hardcoded to 2
     if args.masks:
         weight_dict["loss_mask"] = args.mask_loss_coef
         weight_dict["loss_dice"] = args.dice_loss_coef
@@ -893,7 +908,9 @@ def build(args):
         new_dict[key + "_one2many"] = value
     weight_dict = new_dict
 
-    losses = ["labels", "boxes", "cardinality", "contrastive"]
+    losses = ["labels", "boxes", "cardinality"]
+    if args.upretrain:
+        losses += ["contrastive"]
     if args.masks:
         losses += ["masks"]
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25

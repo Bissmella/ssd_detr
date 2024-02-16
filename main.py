@@ -345,8 +345,8 @@ def main(args):
     #     pin_memory=True,
     # )
     if args.upretrain:
-        data_loader_train = build_train_dataloader(args, ["pascalvoc_uptrain_All",])
-        data_loader_val = build_eval_dataloader(args, ["pascalvoc_upval_All",])
+        data_loader_train = build_train_dataloader(args, ["pascalvoc_uptrain_Base",])
+        data_loader_val = build_eval_dataloader(args, ["pascalvoc_upval_Base",])
     else:
         data_loader_train = build_train_dataloader(args, ["pascalvoc_train_Base",])
         data_loader_val = build_eval_dataloader(args, ["pascalvoc_val_Base",])
