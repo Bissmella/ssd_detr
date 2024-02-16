@@ -49,7 +49,7 @@ def get_args_parser():
         nargs="+",
     )
     parser.add_argument("--lr_linear_proj_mult", default=0.1, type=float)
-    parser.add_argument("--batch_size", default=1, type=int)
+    parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--weight_decay", default=1e-4, type=float)
     parser.add_argument("--epochs", default=50, type=int)
     parser.add_argument("--lr_drop", default=40, type=int)
@@ -251,7 +251,7 @@ def get_args_parser():
         "--output_dir", default="/home/bibahaduri/exps/ex1", help="path where to save, empty for no saving"
     )
     parser.add_argument(
-        "--device", default="cpu", help="device to use for training / testing"
+        "--device", default="cuda", help="device to use for training / testing"
     )
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--resume", default="", help="resume from checkpoint")
@@ -508,7 +508,7 @@ def main(args):
         print(test_stats)
         return
 
-    for key, param in model.named_parameters(): ##model.module   TODO  just for cpu usage change it back
+    for key, param in model.module.named_parameters(): ##model.module   TODO  just for cpu usage change it back
         if key.startswith("backbone.0.net"):
             param.requires_grad = False
     print("Start training")

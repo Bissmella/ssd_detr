@@ -212,16 +212,29 @@ class GlobalDecoderLayer(nn.Module):
         # src = src + self.dropout_img(src2)
         #combined_mask = src_padding_mask & prmpt_mask
         # global cross attention
+        if prmpt_mask is not None:
+            combined_mask = src_padding_mask & prmpt_mask
+        # global cross attention
         tgt2 = self.norm1(tgt)
         
-        tgt2 = self.cross_attn(
-            self.with_pos_embed(tgt2, query_pos),
-            reference_points,
-            self.with_pos_embed(src, src_pos_embed),
-            src,
-            src_spatial_shapes,
-            src_padding_mask,
-        )
+        if prmpt is not None:
+            tgt2 = self.cross_attn(
+                self.with_pos_embed(tgt2, query_pos),
+                reference_points,
+                self.with_pos_embed(prmpt, prmpt_pos_embed),
+                self.with_pos_embed(src, src_pos_embed),
+                src_spatial_shapes,
+                combined_mask,
+            )
+        else:
+            tgt2 = self.cross_attn(
+                self.with_pos_embed(tgt2, query_pos),
+                reference_points,
+                self.with_pos_embed(src, src_pos_embed),
+                src,
+                src_spatial_shapes,
+                src_padding_mask,
+            )
         tgt = tgt + self.dropout1(tgt2)
 
         # ffn

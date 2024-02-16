@@ -585,24 +585,29 @@ class SetCriterion(nn.Module):
         for i, (tens1, tens2) in enumerate(indices):
             tens1 = tens1 + tens1_c
             tens2 = tens2 + tens2_c
-            tens1_c = tens1_c + len(targets[i]["classes"])
-            tens2_c = tens2_c + outputs_feats.shape[1]
+            tens2_c = tens2_c + len(targets[i]["classes"])
+            tens1_c = tens1_c + outputs_feats.shape[1]
             ooi_indices.append((tens1, tens2))##\[tens1[:id_max], tens1[id_max + 1:]]), torch.cat([tens2[:id_max], tens2[id_max + 1:]])))
         
         tensor1s = [t[0] for t in ooi_indices]
         tensor2s = [t[1] for t in ooi_indices]
 
-        pred_indices = torch.cat(tensor1s, dim=0)
-        lbl_indices = torch.cat(tensor2s, dim=0)
+        pred_indices = torch.cat(tensor1s, dim=0).to(outputs_feats.device)
+        lbl_indices = torch.cat(tensor2s, dim=0).to(outputs_feats.device)
 
         
-        target_classes = torch.cat([t["classes"] for t in targets])
-        
+        target_classes = torch.cat([t["classes"] for t in targets]).to(outputs_feats.device)
+        #print("lbl indices ", lbl_indices)
+        #print("target classes ", target_classes)
         online_labels = target_classes[lbl_indices]
         outputs_features = outputs_feats.flatten(0, 1)
         ##copy rest from align Det
         loss_con_ = 0.
         num_valid_labels = 0
+        # print("online labels ", online_labels.dtype)
+        # print("online labels ", online_labels)
+        # uniques = torch.unique(online_labels)
+        # print("uniques ", uniques.shape)
         for label in torch.unique(online_labels):
             # ignore the background class
             if label == -1: #  -1 is place holder for prompt   self.num_classes:
@@ -764,7 +769,7 @@ class SetCriterion(nn.Module):
                 )
                 l_dict = {k + "_enc": v for k, v in l_dict.items()}
                 losses.update(l_dict)
-
+        print(losses.keys())
         return losses
 
 
@@ -868,7 +873,8 @@ def build(args):
     weight_dict = {
         "loss_ce": args.cls_loss_coef,
         "loss_bbox": args.bbox_loss_coef,
-        "loss_giou": args.giou_loss_coef
+        "loss_giou": args.giou_loss_coef,
+        "loss_con": 2                   #TODO contrastive loss coefficient hardcoded to 2
     }
     if args.masks:
         weight_dict["loss_mask"] = args.mask_loss_coef

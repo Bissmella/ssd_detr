@@ -7,7 +7,7 @@ FILE_NAME=$(basename $0)
 EXP_DIR=/home/bibahaduri/exps/${FILE_NAME%.*}${SUB_EXEC}
 PY_ARGS=${@:1}
 
-python -u main.py \
+CUDA_LAUNCH_BLOCKING=1 python -u main.py \
     --output_dir ${EXP_DIR} \
     --with_box_refine \
     --two_stage \
