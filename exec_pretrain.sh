@@ -13,6 +13,7 @@ CUDA_LAUNCH_BLOCKING=1 python -u main.py \
     --two_stage \
     --mixed_selection \
     --look_forward_twice \
+    --resume \
     --upretrain \
     --num_queries_one2one 300 \
     --num_queries_one2many 1500 \
