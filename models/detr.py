@@ -283,10 +283,16 @@ class PlainDETR(nn.Module):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [
-            {"pred_logits": a, "pred_boxes": b, "pred_features": c}
-            for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], output_features[:-1])
-        ]
+        if output_features ==None:  #in case of fine-tuning where there is not output_features for contrastive loss
+            return [
+            {"pred_logits": a, "pred_boxes": b}
+            for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
+            ]
+        else:
+            return [
+                {"pred_logits": a, "pred_boxes": b, "pred_features": c}
+                for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], output_features[:-1])
+            ]
 
 
 class PlainDETRReParam(PlainDETR):
@@ -782,7 +788,6 @@ class SetCriterion(nn.Module):
                 )
                 l_dict = {k + "_enc": v for k, v in l_dict.items()}
                 losses.update(l_dict)
-        print(losses.keys())
         return losses
 
 

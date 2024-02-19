@@ -49,7 +49,7 @@ def get_args_parser():
         nargs="+",
     )
     parser.add_argument("--lr_linear_proj_mult", default=0.1, type=float)
-    parser.add_argument("--batch_size", default=8, type=int)
+    parser.add_argument("--batch_size", default=16, type=int)
     parser.add_argument("--weight_decay", default=1e-4, type=float)
     parser.add_argument("--epochs", default=50, type=int)
     parser.add_argument("--lr_drop", default=40, type=int)
@@ -345,8 +345,8 @@ def main(args):
     #     pin_memory=True,
     # )
     if args.upretrain:
-        data_loader_train = build_train_dataloader(args, ["pascalvoc_uptrain_Base",])
-        data_loader_val = build_eval_dataloader(args, ["pascalvoc_upval_Base",])
+        data_loader_train = build_train_dataloader(args, ["pascalvoc_train_2007_Base","pascalvoc_train_2012_Base"]) #,"pascalvoc_train_2007_Base","pascalvoc_train_2012_Base"
+        data_loader_val = build_eval_dataloader(args, ["pascalvoc_testup_Base",])
     else:
         data_loader_train = build_train_dataloader(args, ["pascalvoc_train_Base",])
         data_loader_val = build_eval_dataloader(args, ["pascalvoc_val_Base",])
@@ -386,6 +386,7 @@ def main(args):
             print(json.dumps(name_dict["params"], indent=2))
     # lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
     #breakpoint()
+    print("dataset_len=",len(data_loader_train.dataset.dataset)) ##
     epoch_iter = math.ceil(len(data_loader_train.dataset.dataset) / args.batch_size)
     if args.warmup:
         lambda0 = lambda cur_iter: cur_iter / args.warmup if cur_iter < args.warmup else (0.1 if cur_iter > args.lr_drop * epoch_iter else 1)
@@ -532,7 +533,7 @@ def main(args):
             use_fp16=args.use_fp16,
             scaler=scaler if args.use_fp16 else None,
             epoch_iter = epoch_iter,
-            df = prmpt_df,
+            upretrain = args.upretrain,
         )
         if args.output_dir:
             checkpoint_paths = []#output_dir / "checkpoint.pth"]

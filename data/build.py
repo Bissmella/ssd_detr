@@ -62,7 +62,7 @@ class JointLoader(torchdata.IterableDataset):
     def __init__(self, loaders, key_dataset):
         dataset_names = []
         for key, loader in loaders.items():
-            name = "{}".format(key.split('_')[0])
+            name = "{}".format(key) #.split('_')[0]
             setattr(self, name, loader)
             dataset_names += [name]
         self.dataset_names = dataset_names
@@ -70,10 +70,14 @@ class JointLoader(torchdata.IterableDataset):
     
     def __iter__(self):
         for batch in zip(*[getattr(self, name) for name in self.dataset_names]):
+            print("batch=", batch)
             yield {key: batch[i] for i, key in enumerate(self.dataset_names)}
 
     def __len__(self):
-        return len(getattr(self, self.key_dataset))
+        length =0
+        for loader in self.dataset_names:
+            length += len(getattr(self, loader).dataset.dataset)
+        return length##len(getattr(self, self.key_dataset))
 
 def filter_images_with_only_crowd_annotations(dataset_dicts, dataset_names):
     """
@@ -450,6 +454,7 @@ def build_train_dataloader(cfg, dataset_names):
     dataset_names = dataset_names##cfg['DATASETS']['TRAIN']
     
     loaders = {}
+    datasets = []
     for dataset_name in dataset_names:
         #cfg = get_config_from_name(cfg, dataset_name)
         # if 'DATASET_MAPPER_NAME' in cfg['INPUT']:
@@ -497,22 +502,24 @@ def build_train_dataloader(cfg, dataset_names):
                     filter_empty=False,
                     proposal_files=None,
                 )
+            datasets.append(dataset)
 
-            sampler = None
-            if sampler is None:
-                sampler_name = "TrainingSampler"
-                logger = logging.getLogger(__name__)
-                logger.info("Using training sampler {}".format(sampler_name))
-                sampler = TrainingSampler(len(dataset))
-            loaders[dataset_name] = build_detection_train_loader(dataset= dataset, mapper=mapper, sampler=sampler, total_batch_size=cfg.batch_size, num_workers=cfg.num_workers)
-        else:
-            mapper = None
-            loaders[dataset_name] = build_detection_train_loader(cfg, dataset_name=dataset_name, mapper=mapper)
+    dataset = torchdata.ConcatDataset(datasets)
+    sampler = None
+    if sampler is None:
+        sampler_name = "TrainingSampler"
+        logger = logging.getLogger(__name__)
+        logger.info("Using training sampler {}".format(sampler_name))
+        sampler = TrainingSampler(len(dataset))
+    loaders[dataset_name] = build_detection_train_loader(dataset= dataset, mapper=mapper, sampler=sampler, total_batch_size=cfg.batch_size, num_workers=cfg.num_workers)
+        # else:
+        #     mapper = None
+        #     loaders[dataset_name] = build_detection_train_loader(cfg, dataset_name=dataset_name, mapper=mapper)
     # breakpoint()
     if len(loaders) == 1 and not False:
         return list(loaders.values())[0]
     else:
-        return JointLoader(loaders, key_dataset=cfg['LOADER'].get('KEY_DATASET', 'coco'))
+        return JointLoader(loaders, key_dataset='pascalvoc')##cfg['LOADER'].get('KEY_DATASET', 'pascal'))
 
     
 def build_evaluator(cfg, dataset_name, device, output_folder=None):
@@ -653,8 +660,10 @@ def batch_collator_eval(batch):
     
     if len(queries) > 0:
         samples, queries = nested_tensor_from_2tensor_lists(samples, queries)
+        del batch      # to not cause memory issues in multiprocessing
         return (samples, queries, targets)
     samples = nested_tensor_from_tensor_list(samples)
+    del batch      # to not cause memory issues in multiprocessing
     return (samples, targets)
 
 def batch_collator_train(batch):
@@ -679,14 +688,17 @@ def batch_collator_train(batch):
         tgt_dict['image_id'] = b['image_id']
         tgt_dict['labels'] = b['instances'].gt_classes
         tgt_dict['boxes'] = b['instances'].gt_boxes##box_ops.box_xyxy_to_cxcywh(b['instances'].gt_boxes) / ratio
-        tgt_dict['classes'] = b['orig_classes']
+        if 'orig_classes' in b:
+            tgt_dict['classes'] = b['orig_classes']
         tgt_dict['classes_info'] = torch.tensor(list(b['classes_info'].keys()))
         targets.append(tgt_dict)
         if 'query' in b:
             queries.append(b['query'])
     if len(queries) > 0:
         samples, queries = nested_tensor_from_2tensor_lists(samples, queries)
+        del batch      # to not cause memory issues in multiprocessing
         return (samples, queries, targets)
     samples = nested_tensor_from_tensor_list(samples)
+    del batch      # to not cause memory issues in multiprocessing
     return (samples, targets)
 

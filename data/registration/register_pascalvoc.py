@@ -151,9 +151,14 @@ def register_all_sbd(root):
         #("pascalvoc_val", "PascalVOC", "Polygon", "val"),
         ("pascalvoc_val", "PascalVOC", "Base", "val"),
         #("pascalvoc_val", "PascalVOC", "Novel", "val"),
-        ("pascalvoc_train", "PascalVOC", "Base", "train"),
+        ("pascalvoc_train_2012", "PascalVOC", "Base", "trainval"), ##**
+        ("pascalvoc_train_2007", "VOC2007", "Base", "trainval"),   ##**
         ("pascalvoc_uptrain", "PascalVOC", "All", "train"),
         ("pascalvoc_upval", "PascalVOC", "All", "val"),
+        ("pascalvoc_uptrain", "PascalVOC", "Base", "train"),
+        ("pascalvoc_upval", "PascalVOC", "Base", "val"),
+        ("pascalvoc_testup", "VOC2007_test","Base", "test"),   ##**
+        ("pascalvoc_test", "VOC2007_test","novel", "test"),
     ]
 
     for name, dirname, mode, split in SPLITS:

@@ -30,7 +30,7 @@ from datasets.data_prefetcher import data_prefetcher
 from torch import distributed as dist
 
 
-def train_hybrid(outputs, targets, k_one2many, criterion, lambda_one2many):
+def train_hybrid(outputs, targets, k_one2many, criterion, lambda_one2many,upretrain):
     # one-to-one-loss
     loss_dict = criterion(outputs, targets)
     multi_targets = copy.deepcopy(targets)
@@ -38,12 +38,14 @@ def train_hybrid(outputs, targets, k_one2many, criterion, lambda_one2many):
     for target in multi_targets:
         target["boxes"] = target["boxes"].repeat(k_one2many, 1)
         target["labels"] = target["labels"].repeat(k_one2many)
-        target["classes"] = target["classes"].repeat(k_one2many)
+        if upretrain:
+            target["classes"] = target["classes"].repeat(k_one2many)
 
     outputs_one2many = dict()
     outputs_one2many["pred_logits"] = outputs["pred_logits_one2many"]
     outputs_one2many["pred_boxes"] = outputs["pred_boxes_one2many"]
-    outputs_one2many['pred_features'] = outputs["pred_features_one2many"]
+    if upretrain:
+        outputs_one2many['pred_features'] = outputs["pred_features_one2many"]
     outputs_one2many["aux_outputs"] = outputs["aux_outputs_one2many"]
     if "pred_boxes_old_one2many" in outputs.keys():
         outputs_one2many["pred_boxes_old"] = outputs["pred_boxes_old_one2many"]
@@ -124,7 +126,7 @@ def train_one_epoch(
     use_fp16: bool = False,
     scaler: torch.cuda.amp.GradScaler = None,
     epoch_iter = None,
-    df = None,
+    upretrain = False,
 ):
     model.train()
     criterion.train()
@@ -151,7 +153,7 @@ def train_one_epoch(
 
             if k_one2many > 0:
                 loss_dict = train_hybrid(
-                    outputs, targets, k_one2many, criterion, lambda_one2many
+                    outputs, targets, k_one2many, criterion, lambda_one2many, upretrain
                 )
             else:
                 loss_dict = criterion(outputs, targets)

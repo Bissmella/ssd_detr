@@ -9,12 +9,15 @@ import copy
 import cv2
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageFilter
+import pandas as pd
 # from detectron2.config import configurable
+import datasets.transforms as T
 
 from torchvision import transforms
 from detectron2.structures import BitMasks, Boxes, Instances
 from detectron2.data import MetadataCatalog, Metadata
+import random
 
 # from utils import prompt_engineering
 # from model.utils import configurable##, PASCAL_CLASSES
@@ -32,6 +35,65 @@ PASCAL_CLASSES = [
 
 IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
+
+
+class GaussianBlur(object):
+    """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
+
+    def __init__(self, sigma=[.1, 2.]):
+        self.sigma = sigma
+
+    def __call__(self, x):
+        sigma = random.uniform(self.sigma[0], self.sigma[1])
+        x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
+        return x
+
+
+def make_self_det_transforms(training):
+    normalize = T.Compose([
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
+    # The image of ImageNet is relatively small.
+    scales = [320, 336, 352, 368, 400, 416, 432, 448, 464, 480]
+
+    if training == True:
+        return T.Compose([
+            # T.RandomHorizontalFlip(), HorizontalFlip may cause the pretext too difficult, so we remove it
+            T.RandomResize(scales, max_size=512),
+            normalize,
+        ])
+
+    if training == False:
+        return T.Compose([
+            T.RandomResize([480], max_size=512),
+            normalize,
+        ])
+
+
+def get_query_transforms(training):
+    if training == True:
+        # SimCLR style augmentation
+        return transforms.Compose([
+            transforms.Resize((512, 512)),
+            transforms.RandomApply([
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+            ], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.5),
+            transforms.ToTensor(),
+            # transforms.RandomHorizontalFlip(),  HorizontalFlip may cause the pretext too difficult, so we remove it
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+        ])
+    if training == False:
+        return transforms.Compose([
+            transforms.Resize((512, 512)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+        ])
 
 # This is specifically designed for the COCO dataset.
 class PascalVOCSegDatasetMapperIX:
@@ -71,11 +133,12 @@ class PascalVOCSegDatasetMapperIX:
         self.min_size_test = min_size_test
         self.max_size_test = max_size_test
 
-        t = []
-        t.append(transforms.Resize(self.min_size_test, interpolation=Image.BICUBIC, max_size=max_size_test, antialias=True))
-        t.append(transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD))
-        self.transform = transforms.Compose(t)
+        self.transform_img = make_self_det_transforms(self.is_train)#transforms.Compose(t)
+        self.query_transform = get_query_transforms(self.is_train)
         self.ignore_id = 220
+
+        file_path = '/home/bibahaduri/dataset/cropped_pascalvoc/image_details.csv'
+        self.prmpt_df = pd.read_csv(file_path)
 
         if grounding:
             def _setattr(self, name, value):
@@ -126,6 +189,36 @@ class PascalVOCSegDatasetMapperIX:
             ]
         )
 
+    def get_prompts(self, classes):
+        #TODO  random_class should be put inside the class_choices
+        # with torch.profiler.profile(profile_memory=True) as prof:
+        if len(classes) == 0 :
+            classes = range(20)
+
+        random_class = random.choice(classes)
+        #image_name = b['image_id'] + '.jpg'
+        filtered_df = self.prmpt_df[self.prmpt_df['Class Name'] == PASCAL_CLASSES[random_class]]  ##(self.prmpt_df['Image Name'] == image_name) &
+        # Check if there are rows that satisfy the condition
+        if not filtered_df.empty:
+            # Select one row randomly from the filtered DataFrame
+            random_row = random.choice(filtered_df.index)
+            # Get the selected row as a DataFrame
+            selected_row = self.prmpt_df.loc[random_row]  #iloc[0]##
+            prmpt_path = selected_row["Cropped Image Path"]
+
+            prmpt = Image.open(prmpt_path)
+
+            # prmpt =np.load(prmpt_path)
+            # prmpt = torch.from_numpy(prmpt)
+
+        
+        # class_choices.append(random_class)
+        # condition = b['labels'] == random_class
+        # b['labels'] = b['labels'][condition]
+        # b['boxes'] = b['boxes'][condition]
+        #prmpts = nested_tensor_from_tensor_list(prmpts)
+        return prmpt, random_class
+
     def encode_segmap(self, mask):
         """Encode segmentation label images as pascal classes
         Args:
@@ -157,12 +250,25 @@ class PascalVOCSegDatasetMapperIX:
         dataset_dict['width'] = image.size[0]
         dataset_dict['height'] = image.size[1]
 
-        # if not self.is_train:
-        image = transforms.ToTensor()(image)
-        image = self.transform(image)
+       
         # image = image.permute(2, 0, 1)
 
         class_ids = [ann_dict['category_id'] for ann_dict in dataset_dict['annotations']]
+        query, query_class = self.get_prompts(class_ids)
+        target = {}
+        target['boxes'] = torch.tensor([data_dict['bbox'] for data_dict in dataset_dict['annotations']])
+        target['labels'] = torch.tensor(class_ids)
+        condition = target['labels'] == query_class
+        target['labels'] = target['labels'][condition]
+        target['labels'].fill_(1)
+        target['boxes'] = target['boxes'][condition]
+
+        image, target = self.transform_img(image, target)
+        dataset_dict['size'] = target['size']
+        dataset_dict['orig_size'] = torch.tensor([dataset_dict['height'], dataset_dict['width']])
+        query = self.query_transform(query)
+
+
         instances = Instances(image.shape[-2:])
         mask_instances = Instances(image.shape[-2:])
         if 'inst_name' in dataset_dict.keys():
@@ -206,6 +312,7 @@ class PascalVOCSegDatasetMapperIX:
         dataset_dict['instances'] = instances  # gt_masks, gt_boxes
         dataset_dict['mask_instances'] = mask_instances
         dataset_dict['image'] = image  # (3,h,w)
+        dataset_dict['query'] = query
         ##dataset_dict['classes'] = class_names  # [prompt_engineering(x, topk=1, suffix='.') for x in class_names]
         dataset_dict['classes_info'] = classes_info
         return dataset_dict
